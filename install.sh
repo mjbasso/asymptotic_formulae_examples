@@ -19,7 +19,7 @@ echo "probfit    ~= 1.1"  >> requirements.txt
 echo "scipy      ~= 1.5"  >> requirements.txt
 
 # Extra packages for running on a raspberry pi
-RASPERRY_PI=true
+RASPERRY_PI=false
 if $RASPERRY_PI; then
     echo "cairocffi  ~= 1.2"    >> requirements.txt
     echo "pgi        ~= 0.0.11" >> requirements.txt
