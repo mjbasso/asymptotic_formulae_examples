@@ -35,7 +35,7 @@ def logVector(low, high, n):
     vec  = np.array([low + step * i for i in range(n + 1)])
     return np.exp(np.log(10) * vec)
 
-# As described in Section X
+# As described in Section 2.1.4
 def nCRZ0_DiagTauAndNeq2(s, b1, b2, tau1, tau2):
     assert tau1 != 0. and tau2 != 0.
     if tau2 > tau1:
@@ -59,7 +59,7 @@ def nCRZ0_DiagTauAndNeq2(s, b1, b2, tau1, tau2):
     Z0     = np.sqrt(-2. * np.log(((bhh1 + bhh2) / n) ** n * (bhh1 / bh1) ** m1 * (bhh2 / bh2) ** m2))
     return Z0
 
-# As described in Section Y and Appendix A
+# As described in Section 2.4.2 and Appendix A
 def GaussZ0_DecorrConstAndNeqMeq2(s, b1, b2, sigma1, sigma2):
     n        = s + b1 + b2
     A1       = (sigma1 ** 2 + sigma2 ** 2) / sigma1 ** 4
