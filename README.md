@@ -29,7 +29,7 @@ from asymptotic_formulae import nSRZ0
 s   = [40., 10., 12.]
 b   = 1000.
 tau = [2., 10., 20.]
-z0  = nSRZ0(s, b, tau))
+z0  = nSRZ0(s, b, tau)
 ```
 
 Returning:
