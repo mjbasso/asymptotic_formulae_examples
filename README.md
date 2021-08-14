@@ -15,10 +15,21 @@ source install.sh
 Running:
 --------
 
-To produce the plots from the paper, run:
+To produce the plots from the paper (N.B.: from scratch, this will take a *long* time), run:
 
 ```bash
 python3 make_paper_plots.py
+```
+
+In Python programs, the functions from `asymptotic_formulae` can be imported and used like:
+
+```python
+from asymptotic_formulae import nSRZ0
+
+s   = [40., 10., 12.]
+b   = 1000.
+tau = [2., 10., 20.]
+z0  = nSRZ0(s, b, tau))
 ```
 
 Returning:
