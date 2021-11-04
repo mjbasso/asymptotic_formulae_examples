@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy
 from matplotlib import rc
+from scipy.optimize import least_squares
 
 import asymptotic_formulae
 from asymptotic_formulae import GaussZ0
@@ -36,80 +37,71 @@ def logVector(low, high, n):
     return np.exp(np.log(10) * vec)
 
 # As described in Section 2.1.4
-def nCRZ0_DiagTauAndNeq2(s, b1, b2, tau1, tau2):
-    assert tau1 != 0. and tau2 != 0.
-    if tau2 > tau1:
-        tau1, tau2 = tau2, tau1
-        b1, b2 = b2, b1
-    assert tau1 > tau2
-    n      = s + b1 + b2
-    m1     = tau1 * b1
-    m2     = tau2 * b2
-    bh1    = b1
-    bh2    = b2
-    dtau12 = tau1 - tau2
-    A1     = dtau12 * (1 + tau1)
-    B1     = -1 * dtau12 * (n + m1) - (1 + tau1) * (m1 + m2)
-    C1     = m1 * (m1 + m2 + n)
-    A2     = -1 * dtau12 * (1 + tau2)
-    B2     = dtau12 * (n + m2) - (1 + tau2) * (m1 + m2)
-    C2     = m2 * (m1 + m2 + n)
-    bhh1   = (np.abs(B1) - np.sqrt(B1 ** 2 - 4 * np.abs(A1 * C1))) / 2 / np.abs(A1)
-    bhh2   = (B2 + np.sqrt(B2 ** 2 + 4 * np.abs(A2 * C2))) / 2 / np.abs(A2)
-    Z0     = np.sqrt(-2. * np.log(((bhh1 + bhh2) / n) ** n * (bhh1 / bh1) ** m1 * (bhh2 / bh2) ** m2))
+def nCRZ0_DiagTau(s, b, tau):
+    ''' Calculate the asymptotic significance for a 1 SR + N CRs, diagonal tau measurement
+        s   := expected signal yield in SR (float)
+        b   := expected background yields in SR (vector of floats, size N)
+        tau := transfer coefficients, tau[i] carries background i yield in SR to CR i (vector of floats, size N)
+        Returns Z0 (float) '''
+
+    # Argument checking
+    b, tau = np.array(b), np.array(tau)
+    s, b, tau = float(s), b.astype(float), tau.astype(float)
+    assert b.ndim == 1 # b should be a vector
+    assert tau.ndim == 1 # tau should be a vector
+    assert len(b) == len(tau)
+    assert (tau >= 0.).all() # Assert tau contains transfer factors (i.e., all positive)
+    n = s + np.sum(b)
+
+    # System of equations
+    def func(bhh):
+        eqns = []
+        for k in range(len(b)):
+            eqns.append(n / np.sum(bhh) - 1. + tau[k] * (b[k] / bhh[k] - 1.))
+        return eqns
+
+    # Perform our minimization
+    res = least_squares(func, x0 = b, bounds = [tuple(len(b) * [0.]), tuple(len(b) * [np.inf])])
+    if not res.success:
+        raise RuntimeError('Minimization failed: status = %s, message = \'%s\'' % (res.status, res.message))
+    bhh = np.array(res.x)
+
+    # Calculate our significance
+    Z0 = np.sqrt(-2. * np.log((np.sum(bhh) / n) ** n * np.prod([(bhh[k] / b[k]) ** (tau[k] * b[k]) for k in range(len(b))])))
     return Z0
 
-# As described in Section 2.4.2 and Appendix A
-def GaussZ0_DecorrConstAndNeqMeq2(s, b1, b2, sigma1, sigma2):
-    n        = s + b1 + b2
-    A1       = (sigma1 ** 2 + sigma2 ** 2) / sigma1 ** 4
-    B1       = (sigma1 ** 2 * (2. * b1 / sigma1 ** 2 - b1 / sigma1 ** 2 - 1.) + sigma2 ** 2 * (2. * b1 / sigma1 ** 2 - b2 / sigma2 ** 2 - 1.)) / sigma1 ** 2
-    C1       = n + (1. - b1 / sigma1 ** 2) * (sigma1 ** 2 * (b1 / sigma1 ** 2 - b1 / sigma1 ** 2) + sigma2 ** 2 * (b1 / sigma1 ** 2 - b2 / sigma2 ** 2))
-    x1_term1 = B1 / 2. / A1
-    x1_term2 = np.sqrt(B1 ** 2 + 4. * A1 * C1) / 2. / A1
-    A2       = (sigma1 ** 2 + sigma2 ** 2) / sigma2 ** 4
-    B2       = (sigma1 ** 2 * (2. * b2 / sigma2 ** 2 - b1 / sigma1 ** 2 - 1.) + sigma2 ** 2 * (2. * b2 / sigma2 ** 2 - b2 / sigma2 ** 2 - 1.)) / sigma2 ** 2
-    C2       = n + (1. - b2 / sigma2 ** 2) * (sigma1 ** 2 * (b2 / sigma2 ** 2 - b1 / sigma1 ** 2) + sigma2 ** 2 * (b2 / sigma2 ** 2 - b2 / sigma2 ** 2))
-    x2_term1 = B2 / 2. / A2
-    x2_term2 = np.sqrt(B2 ** 2 + 4. * A2 * C2) / 2. / A2
-    sum1     = None
-    sum2     = None
-    obj1     = lambda x1, x2 : np.abs(n / (x1 + x2) - x1 / sigma1 ** 2 + (b1 / sigma1 ** 2 - 1.))
-    obj2     = lambda x1, x2 : np.abs(n / (x1 + x2) - x2 / sigma2 ** 2 + (b2 / sigma2 ** 2 - 1.))
-    if sigma1 ** 2 > b1:
-        sum1 = lambda x, y: x + y
-    if sigma2 ** 2 > b2:
-        sum2 = lambda x, y: x + y
-    if sum1 is None and sum2 is None:
-        sol_found = False
-        for sum1 in [(lambda x, y: x + y), (lambda x, y: x - y)]:
-            for sum2 in [(lambda x, y: x + y), (lambda x, y: x - y)]:
-                if obj1(sum1(x1_term1, x1_term2), sum2(x2_term1, x2_term2)) < 1e-9 and obj2(sum1(x1_term1, x1_term2), sum2(x2_term1, x2_term2)) < 1e-9:
-                    sol_found = True
-                    break
-            if sol_found:
-                break
-        if not sol_found:
-            raise RuntimeError('No solution found!')
-    elif sum1 is None:
-        sol_found = False
-        for sum1 in [(lambda x, y: x + y), (lambda x, y: x - y)]:
-            if obj1(sum1(x1_term1, x1_term2), sum2(x2_term1, x2_term2)) < 1e-9 and obj2(sum1(x1_term1, x1_term2), sum2(x2_term1, x2_term2)) < 1e-9:
-                sol_found = True
-                break
-        if not sol_found:
-            raise RuntimeError('No solution found!')
-    elif sum2 is None:
-        sol_found = False
-        for sum2 in [(lambda x, y: x + y), (lambda x, y: x - y)]:
-            if obj1(sum1(x1_term1, x1_term2), sum2(x2_term1, x2_term2)) < 1e-9 and obj2(sum1(x1_term1, x1_term2), sum2(x2_term1, x2_term2)) < 1e-9:
-                sol_found = True
-                break
-        if not sol_found:
-            raise RuntimeError('No solution found!')
-    bhh1 = sum1(x1_term1, x1_term2)
-    bhh2 = sum2(x2_term1, x2_term2)
-    Z0   = np.sqrt(-2. * (n * np.log((bhh1 + bhh2) / n) + n - (bhh1 + 0.5 * ((b1 - bhh1) / sigma1) ** 2 + bhh2 + 0.5 * ((b2 - bhh2) / sigma2) ** 2)))
+# As described in Section 2.4.2
+def GaussZ0_Decorr(s, b, sigma):
+    ''' Calculate the asymptotic significance for a 1 SR + N CRs, diagonal tau measurement
+        s     := expected signal yield in SR (float)
+        b     := expected background yields in SR (vector of floats, size N)
+        sigma := width of Gaussian constraint ("absolute uncertainty") for each background yield (vector of floats, size N)
+        Returns Z0 (float) '''
+
+    # Argument checking
+    b, sigma = np.array(b), np.array(sigma)
+    s, b, sigma = float(s), b.astype(float), sigma.astype(float)
+    assert b.ndim == 1 # b should be a vector
+    assert sigma.ndim == 1 # sigma should be a vector
+    assert len(b) == len(sigma)
+    assert (sigma >= 0.).all() # Assert sigma contains widths (i.e., all positive)
+    n = s + np.sum(b)
+
+    # System of equations
+    def func(bhh):
+        eqns = []
+        for k in range(len(b)):
+            eqns.append(sigma[k] * (n / np.sum(bhh) - 1.) - (bhh[k] - b[k]) / sigma[k])
+        return eqns
+
+    # Perform our minimization
+    res = least_squares(func, x0 = b, bounds = [tuple(len(b) * [0.]), tuple(len(b) * [np.inf])])
+    if not res.success:
+        raise RuntimeError('Minimization failed: status = %s, message = \'%s\'' % (res.status, res.message))
+    bhh = np.array(res.x)
+
+    # Calculate our significance
+    Z0 = np.sqrt(-2. * (n * np.log(np.sum(bhh) / n) + n - np.sum(bhh + 0.5 * ((b - bhh) / sigma) ** 2)))
     return Z0
 
 def makedir(path):
@@ -139,15 +131,67 @@ def main():
     plotdir   = makedir(pjoin(basedir, 'plots/'))
 
     #####################
-    ### SECTION 2.1.4 ###
+    ### SECTION 2.1.1 ###
     #####################
 
-    def Section2p1p4():
+    def Section2p1p1():
+
+        s     = 50.
+        b1    = 100.
+        b2    = 50.
+        tau11 = 60.
+        tau22 = 40.
+        tau12 = np.linspace(0., b1 * tau11 / b2, 100)
+        tau21 = np.linspace(0., b2 * tau22 / b1, 100)
+
+        z0 = np.empty((len(tau12), len(tau21)))
+        for i in range(len(tau12)):
+            for j in range(len(tau21)):
+                z0[i, j] = nCRZ0(s, [b1, b2], [[tau11, tau12[i]], [tau21[j], tau22]])
+
+        fig  = plt.figure()
+        ax   = fig.add_subplot(111)
+        pcm  = ax.pcolormesh(tau12 * b2 / (tau11 * b1), tau21 * b1 / (tau22 * b2), z0, cmap = 'magma', shading = 'nearest')
+        pcm.set_edgecolor('face')
+        cbar = plt.colorbar(pcm)
+        ax.set_xlabel('($b_2$ in CR 1) / ($b_1$ in CR 1) [a.u.]')
+        ax.set_ylabel('($b_1$ in CR 2) / ($b_2$ in CR 2) [a.u.]')
+        cbar.set_label('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]', rotation = 270, labelpad = 20)
+        # ax.set_title('Asymptotic significance for CRs with mixed background processes', pad = 10)
+        plt.savefig(pjoin(plotdir, '1SRNCR_mixed_processes.eps'), format = 'eps', dpi = 1200)
+        plt.close()
+
+        multi = logVector(1, 1000, 100)
+
+        z0 = np.empty((len(multi), len(multi)))
+        for i in range(len(multi)):
+            for j in range(len(multi)):
+                z0[i, j] = nCRZ0(s, [b1, b2], [[multi[i], 0.1 * multi[i] * b1 / b2], [0.1 * multi[j] * b2 / b1, multi[j]]])
+
+        fig  = plt.figure()
+        ax   = fig.add_subplot(111)
+        pcm  = ax.pcolormesh(multi, multi, z0, cmap = 'magma', shading = 'nearest')
+        pcm.set_edgecolor('face')
+        cbar = plt.colorbar(pcm)
+        ax.set_xlabel('($b_1$ in SR) / ($b_1$ in CR 1) [a.u.]')
+        ax.set_ylabel('($b_2$ in SR) / ($b_2$ in CR 2) [a.u.]')
+        ax.set_xscale('log')
+        ax.set_yscale('log')
+        cbar.set_label('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]', rotation = 270, labelpad = 20)
+        # ax.set_title('Asymptotic significance for CRs varying transfer factors', pad = 10)
+        plt.savefig(pjoin(plotdir, '1SRNCR_varying_tau.eps'), format = 'eps', dpi = 1200)
+        plt.close()
+
+    #####################
+    ### SECTION 2.1.2 ###
+    #####################
+
+    def Section2p1p2():
 
         # Set the seed
         np.random.seed(43)
 
-        datapath = pjoin(pickledir, 'Section2p1p4.pkl')
+        datapath = pjoin(pickledir, 'Section2p1p2.pkl')
         s        = 10.
         b1       = [round(n) for n in logVector(1., 1000., 10)]
         b2       = [5., 25., 150.]
@@ -169,16 +213,16 @@ def main():
                     data[k]['t1'].append(t1)
             plt.plot(b1, data[k]['z0'], marker = 'o', color = c, linewidth = 0, label = 'Numerical: $b_2 = %s$' % int(_b2))
             b1Fine = logVector(b1[0], b1[-1], 1000)
-            plt.plot(b1Fine, [nCRZ0_DiagTauAndNeq2(s, _b1, _b2, tau1, tau2) for _b1 in b1Fine], linestyle = '-', markersize = 0, color = c, label = 'Asymptotic: $b_2 = %s$' % int(_b2))
+            plt.plot(b1Fine, [nCRZ0_DiagTau(s, [_b1, _b2], [tau1, tau2]) for _b1 in b1Fine], linestyle = '-', markersize = 0, color = c, label = 'Asymptotic: $b_2 = %s$' % int(_b2))
             plt.plot(b1Fine, s / np.sqrt(s + b1Fine + _b2), linestyle = '--', markersize = 0, color = c, label = 'Simple: $b_2 = %s$' % int(_b2))
         plt.xlim((b1[0], b1[-1]))
         plt.ylim((0., 3.5))
         plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
         plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
         plt.xscale('log')
-        plt.title('1 SR + 2 CRs Asymptotic Significance: $s = %s$, $\\tau_1 = %s$, $\\tau_2 = %s$' % (int(s), int(tau1), int(tau2)))
+        # plt.title('1 SR + 2 CRs Asymptotic Significance: $s = %s$, $\\tau_1 = %s$, $\\tau_2 = %s$' % (int(s), int(tau1), int(tau2)))
         plt.legend(loc = 'upper right')
-        plt.savefig(pjoin(plotdir, '1SRplus2CR.pdf'))
+        plt.savefig(pjoin(plotdir, '1SRplus2CR.eps'), format = 'eps', dpi = 1200)
         plt.close()
 
         axrange = (0., 25.)
@@ -192,21 +236,21 @@ def main():
             plt.ylabel('Normalized counts [a.u.]')
             plt.yscale('log')
             plt.legend()
-            plt.savefig(pjoin(plotdir, '1SRplus2CR_b1eq%s.pdf' % int(_b1)))
+            plt.savefig(pjoin(plotdir, '1SRplus2CR_b1eq%s.eps' % int(_b1)), format = 'eps', dpi = 1200)
             plt.close()
 
         dump_data_to_pickle(data, datapath)
 
     #####################
-    ### SECTION 2.2.2 ###
+    ### SECTION 2.2.1 ###
     #####################
 
-    def Section2p2():
+    def Section2p2p1():
 
         # Set the seed
         np.random.seed(44)
 
-        datapath = pjoin(pickledir, 'Section2p2.pkl')
+        datapath = pjoin(pickledir, 'Section2p2p1.pkl')
         s1       = [round(n) for n in logVector(1., 100., 10)]
         s2       = [25., 10., 10.]
         s3       = 12.
@@ -239,9 +283,9 @@ def main():
         plt.xlabel('Signal yield in SR 1 $s_1$ [a.u.]')
         plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
         plt.xscale('log')
-        plt.title('3 SRs + 1 CR Asymptotic Significance: $s_3 = %s$, $\\tau_1 = %s$, $\\tau_2 = %s$, $\\tau_3 = %s$' % (int(s3), int(tau1), int(tau2), int(tau3)))
+        # plt.title('3 SRs + 1 CR Asymptotic Significance: $s_3 = %s$, $\\tau_1 = %s$, $\\tau_2 = %s$, $\\tau_3 = %s$' % (int(s3), int(tau1), int(tau2), int(tau3)))
         plt.legend(loc = 'upper left', bbox_to_anchor = (1.0, 1.02))
-        plt.savefig(pjoin(plotdir, '3SRplus1CR.pdf'), bbox_inches = 'tight')
+        plt.savefig(pjoin(plotdir, '3SRplus1CR.eps'), format = 'eps', dpi = 1200, bbox_inches = 'tight')
         plt.close()
 
         dump_data_to_pickle(data, datapath)
@@ -279,16 +323,16 @@ def main():
                     data[k]['t1'].append(t1)
             plt.plot(b1, data[k]['z0'], marker = 'o', color = c, linewidth = 0, label = 'Numerical: $b_2 = %s$' % int(_b2))
             b1Fine = logVector(b1[0], b1[-1], 1000)
-            plt.plot(b1Fine, [GaussZ0(s, [_b1, _b2], R, S) for _b1 in b1Fine], linestyle = '-', markersize = 0, color = c, label = 'Asymptotic: $b_2 = %s$' % int(_b2))
+            plt.plot(b1Fine, [GaussZ0_Decorr(s, [_b1, _b2], [_b1 * sigma1 / 100., _b2 * sigma2 / 100.]) for _b1 in b1Fine], linestyle = '-', markersize = 0, color = c, label = 'Asymptotic: $b_2 = %s$' % int(_b2))
             plt.plot(b1Fine, s / np.sqrt(s + b1Fine + _b2 + (sigma1 / 100. * b1Fine) ** 2 + (sigma2 / 100. * _b2) ** 2), linestyle = '--', markersize = 0, color = c, label = 'Simple: $b_2 = %s$' % int(_b2))
         plt.xlim((b1[0], b1[-1]))
         plt.ylim((0., 3.5))
         plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
         plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
         plt.xscale('log')
-        plt.title('1 SR + 2 Gaussian Decorrelated Constraints Asymptotic Significance:\n$s = {}$, $\\sigma_1 = {}\\%$, $\\sigma_2 = {}\\%$'.format(int(s), int(sigma1), int(sigma2)))
+        # plt.title('1 SR + 2 Gaussian Decorrelated Constraints Asymptotic Significance:\n$s = {}$, $\\sigma_1 = {}\\%$, $\\sigma_2 = {}\\%$'.format(int(s), int(sigma1), int(sigma2)))
         plt.legend(loc = 'upper right')
-        plt.savefig(pjoin(plotdir, '1SRplus2GaussConst.pdf'))
+        plt.savefig(pjoin(plotdir, '1SRplus2GaussConst.eps'), format = 'eps', dpi = 1200)
         plt.close()
 
         dump_data_to_pickle(data, datapath)
@@ -300,11 +344,10 @@ def main():
         s        = 10.
         b1       = [25., 50., 50., 150.]
         b2       = [25., 50., 150., 50.]
-        R        = lambda sigma1, sigma2: [[lambda th: 1. + sigma1 / 100. * th, lambda th: 1.], [lambda th: 1., lambda th: 1. + sigma2 / 100. * th]]
-        S        = [[1., 0.], [0., 1.]]
         colours  = ['gold', 'g', 'b', 'r']
 
-        fig, axs = plt.subplots(nrows = len(sigma2), ncols = 1, sharex = True, figsize = [6.0, len(sigma2) * 4.0])
+        fig, axs = plt.subplots(nrows = 2, ncols = 2, sharex = 'col', sharey = 'row', figsize = [2 * 6.0, 2 * 4.0])
+        axs[1, 1].axis('off')
 
         for i, _sigma2 in enumerate(sigma2):
 
@@ -316,6 +359,17 @@ def main():
             datapath = pjoin(pickledir, 'Section2p4p2_vsSigma_sigma2eq%s.pkl' % int(_sigma2))
             data     = load_data_from_pickle(datapath)
 
+            if i == 0:
+                ax = axs[0, 0]
+            elif i == 1:
+                ax = axs[0, 1]
+            elif i == 2:
+                ax = axs[1, 0]
+            elif i == 3:
+                continue
+            else:
+                ax = None
+
             for _b1, _b2, c in zip(b1, b2, colours):
                 k = str(int(_b1)) + '_' + str(int(_b2))
                 if not data.get(k, {}):
@@ -326,23 +380,29 @@ def main():
                         data[k]['z0'].append(z0)
                         data[k]['t0'].append(t0)
                         data[k]['t1'].append(t1)
-                axs[i].plot(sigma1, data[k]['z0'], marker = 'o', color = c, linewidth = 0, label = 'Numerical: $(b_1, b_2) = (%s, %s)$' % (int(_b1), int(_b2)) if i == 0 else '')
+                ax.plot(sigma1, data[k]['z0'], marker = 'o', color = c, linewidth = 0, label = 'Numerical: $(b_1, b_2) = (%s, %s)$' % (int(_b1), int(_b2)) if i == 0 else '')
                 sigma1Fine = logVector(sigma1[0], sigma1[-1] if sigma1[-1] > 1000. else 1000., 1000)
-                axs[i].plot(sigma1Fine, [GaussZ0(s, [_b1, _b2], R(_sigma1, _sigma2), S) for _sigma1 in sigma1Fine], linestyle = '-', markersize = 0, color = c, label = 'Asymptotic: $(b_1, b_2) = (%s, %s)$' % (int(_b1), int(_b2)) if i == 0 else '')
-                axs[i].plot(sigma1Fine, s / np.sqrt(s + _b1 + _b2 + (sigma1Fine / 100. * _b1) ** 2 + (_sigma2 / 100. * _b2) ** 2), linestyle = '--', markersize = 0, color = c, label = 'Simple: $(b_1, b_2) = (%s, %s)$' % (int(_b1), int(_b2)) if i == 0 else '')
-            axs[i].set_ylim((0., 1.4))
-            axs[i].set_ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
-            axs[i].text(50, 1.2, '$s = {}$, $\\sigma_2 = {}\\%$'.format(int(s), int(_sigma2)), fontsize = 12, bbox = {'facecolor': 'white', 'pad': 10})
+                ax.plot(sigma1Fine, [GaussZ0_Decorr(s, [_b1, _b2], [_b1 * _sigma1 / 100., _b2 * _sigma2 / 100.]) for _sigma1 in sigma1Fine], linestyle = '-', markersize = 0, color = c, label = 'Asymptotic: $(b_1, b_2) = (%s, %s)$' % (int(_b1), int(_b2)) if i == 0 else '')
+                ax.plot(sigma1Fine, s / np.sqrt(s + _b1 + _b2 + (sigma1Fine / 100. * _b1) ** 2 + (_sigma2 / 100. * _b2) ** 2), linestyle = '--', markersize = 0, color = c, label = 'Simple: $(b_1, b_2) = (%s, %s)$' % (int(_b1), int(_b2)) if i == 0 else '')
+            ax.set_ylim((0., 1.4))
+            if i != 1: ax.set_ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
+            ax.text(40, 1.2, '$s = {}$, $\\sigma_2 = {}\\%$'.format(int(s), int(_sigma2)), fontsize = 12, bbox = {'facecolor': 'white', 'pad': 10})
+            if i != 0:
+                ax.set_xlim((sigma1[0], sigma1[-1] if sigma1[-1] > 1000. else 1000.))
+                ax.set_xlabel('Background 1 yield uncertainty in SR $\\sigma_1$ [\\%]')
+                ax.set_xscale('log')
+            if i == 1: ax.xaxis.set_tick_params(labelbottom = True)
             dump_data_to_pickle(data, datapath)
 
-        axs[-1].set_xlim((sigma1[0], sigma1[-1] if sigma1[-1] > 1000. else 1000.))
-        axs[-1].set_xlabel('Background 1 yield uncertainty in SR $\\sigma_1$ [\\%]')
-        axs[-1].set_xscale('log')
-        fig.suptitle('1 SR + 2 Decorrelated Gaussian Constraints Asymptotic Significance:')
-        axs[0].legend(loc = 'upper left', bbox_to_anchor = (1.0, -0.15))
-        plt.subplots_adjust(hspace = 0.05, top = 0.95, bottom = 0.05)
-        plt.savefig(pjoin(plotdir, '1SRplus2GaussConst_err.pdf'), bbox_inches = 'tight')
+        # fig.suptitle('1 SR + 2 Decorrelated Gaussian Constraints Asymptotic Significance')
+        axs[0, 0].legend(loc = 'upper left', bbox_to_anchor = (1.05, -0.15))
+        plt.subplots_adjust(hspace = 0.05, wspace = 0.05) # , top = 0.95, bottom = 0.05)
+        plt.savefig(pjoin(plotdir, '1SRplus2GaussConst_err.eps'), format = 'eps', dpi = 1200, bbox_inches = 'tight')
         plt.close()
+
+    #####################
+    ### SECTION 2.4.4 ###
+    #####################
 
     def Section2p4p4_Corr():
 
@@ -378,12 +438,116 @@ def main():
         plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
         plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
         plt.xscale('log')
-        plt.title('1 SR + 2 Gaussian Correlated Constraints Asymptotic Significance:\n$s = {}$, $b_2 = {}$, $\\sigma_1 = {}\\%$, $\\sigma_2 = {}\\%$'.format(int(s), int(b2), int(sigma1), int(sigma2)))
+        # plt.title('1 SR + 2 Gaussian Correlated Constraints Asymptotic Significance:\n$s = {}$, $b_2 = {}$, $\\sigma_1 = {}\\%$, $\\sigma_2 = {}\\%$'.format(int(s), int(b2), int(sigma1), int(sigma2)))
         plt.legend(loc = 'upper right')
-        plt.savefig(pjoin(plotdir, '1SRplus2GaussConst_corr.pdf'))
+        plt.savefig(pjoin(plotdir, '1SRplus2GaussConst_corr.eps'), format = 'eps', dpi = 1200)
         plt.close()
 
         dump_data_to_pickle(data, datapath)
+
+    #####################
+    ### SECTION 2.4.5 ###
+    #####################
+
+    def Section2p4p5_Response():
+
+        # Set the seed
+        np.random.seed(49)
+
+        def smooth_interpolate(th, func1, func2, weight):
+            return weight(th) * func1(th) + (1. - weight(th)) * func2(th)
+
+        def heaviside(th, sigma_lo, sigma_hi):
+            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: 1. - np.heaviside(th, 1.))
+
+        def arctan(th, sigma_lo, sigma_hi, k = 10.):
+            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: (1. - 2. / np.pi * np.arctan(np.pi / 2. * k * th)) / 2.)
+
+        def tanh(th, sigma_lo, sigma_hi, k = 10.):
+            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: (1. - np.tanh(k * th)) / 2.)
+
+        def erf(th, sigma_lo, sigma_hi, k = 10.):
+            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: (1. - scipy.special.erf(k * th)) / 2.)
+
+        def sigmoid(th, sigma_lo, sigma_hi, k = 10.):
+            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: 1. - 1. / (1. + np.exp(-k * th)))
+
+        response_functions = {'Heaviside': (heaviside, 'k', '-'), 'arctan': (arctan, 'g', '--'), 'tanh': (tanh, 'b', ':'), 'erf': (erf, 'r', '-.'), 'sigmoid': (sigmoid, 'gold', '-')}
+
+        sigma_lo = 0.20
+        sigma_hi = 0.35
+        th = np.linspace(-1., +1., 1000)
+        for l, (f, c, ls) in response_functions.items():
+            plt.plot(th, f(th, sigma_lo, sigma_hi), color = c, label = l, linestyle = ls)
+        plt.xlim((th[0], th[-1]))
+        plt.ylim((1. - sigma_lo, 1. + sigma_hi))
+        plt.xlabel('Nuisance parameter $\\theta$ [a.u.]')
+        plt.ylabel('Response function $R(\\theta)$ [a.u.]')
+        # plt.title('Different Response Functions')
+        plt.legend(loc = 'upper left')
+        plt.savefig(pjoin(plotdir, 'response_functions.eps'), format = 'eps', dpi = 1200)
+        plt.xlim((-0.2, +0.2))
+        plt.ylim((0.95, 1.075))
+        plt.savefig(pjoin(plotdir, 'response_functions_zoomed.eps'), format = 'eps', dpi = 1200)
+        plt.close()
+
+        # 1st derivatives:
+        th = np.linspace(-1., +1., 1000)
+        for l, (f, c, ls) in response_functions.items():
+            plt.plot(th, scipy.misc.derivative(lambda th: f(th, sigma_lo, sigma_hi), th, dx = 1e-6), color = c, label = l, linestyle = ls)
+        plt.xlim((th[0], th[-1]))
+        plt.ylim((0.15, 0.40))
+        plt.xlabel('Nuisance parameter $\\theta$ [a.u.]')
+        plt.ylabel('Derivative of response function $dR(\\theta)/d\\theta$ [a.u.]')
+        # plt.title('Dervatives of Different Response Functions')
+        plt.legend(loc = 'upper left')
+        plt.savefig(pjoin(plotdir, 'response_functions_derivatives.eps'), format = 'eps', dpi = 1200)
+        plt.close()
+
+        s         = 10.
+        b1        = logVector(1., 10000., 100)
+        b2        = 5.
+        sigma1_lo = 20. / 100.
+        sigma1_hi = 35. / 100.
+        sigma2_lo = 70. / 100.
+        sigma2_hi = 90. / 100.
+        R         = lambda sigma1_lo, sigma1_hi, sigma2_lo, sigma2_hi: [[lambda th: f(th, sigma1_lo, sigma1_hi), lambda th: 1.], [lambda th: 1., lambda th: f(th, sigma2_lo, sigma2_hi)]]
+        S         = [[1., 0.75], [0.75, 1.]]
+
+        for l, (f, c, ls) in response_functions.items():
+            plt.plot(b1, [GaussZ0(s = s, b = [_b1, b2], R = R(sigma1_lo, sigma1_hi, sigma2_lo, sigma2_hi), S = S) for _b1 in b1], linestyle = ls, markersize = 0, color = c, label = l)
+
+        plt.xlim((b1[0], b1[-1]))
+        plt.ylim((0.001, 10.))
+        plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
+        plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
+        plt.xscale('log')
+        plt.yscale('log')
+        # plt.title('Sensitivities for Different Response Functions:\n$s = {}$, $b_2 = {}$'.format(int(s), int(b2)))
+        plt.legend(loc = 'upper right')
+        plt.savefig(pjoin(plotdir, 'response_functions_z0_b2eq%s.eps' % int(b2)), format = 'eps', dpi = 1200, bbox_inches = 'tight')
+        plt.close()
+
+        s  = 100.
+        b2 = 10000.
+
+        for l, (f, c, ls) in response_functions.items():
+            plt.plot(b1, [GaussZ0(s = s, b = [_b1, b2], R = R(sigma1_lo, sigma1_hi, sigma2_lo, sigma2_hi), S = S) for _b1 in b1], linestyle = ls, markersize = 0, color = c, label = l)
+
+        plt.xlim((b1[0], b1[-1]))
+        plt.ylim((0.008, 0.02))
+        plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
+        plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
+        plt.xscale('log')
+        plt.yscale('log')
+        # plt.title('Sensitivities for Different Response Functions:\n$s = {}$, $b_2 = {}$'.format(int(s), int(b2)))
+        plt.legend(loc = 'upper right')
+        plt.savefig(pjoin(plotdir, 'response_functions_z0_b2eq%s.eps' % int(b2)), format = 'eps', dpi = 1200, bbox_inches = 'tight')
+        plt.close()
+
+    #####################
+    ### SECTION 2.4.6 ###
+    #####################
 
     def Section2p4p6_CPU():
 
@@ -437,7 +601,7 @@ def main():
         fig = plt.figure()
         fig, axs = plt.subplots(2, 1, sharex = True)
         fig.subplots_adjust(hspace = 0.1)
-        fig.suptitle('CPU Comparisons: Numerical vs. Asymptotic for Gaussian Constraints')
+        # fig.suptitle('CPU Comparisons: Numerical vs. Asymptotic for Gaussian Constraints')
         axs[0].plot(ntoys, data['z0'], color = 'darkorange', label = 'Numerical')
         axs[0].plot(ntoys, data['z0_asymptotic'], color = 'navy', label = 'Asymptotic')
         axs[0].set_ylabel('Significance of discovery [a.u.]')
@@ -451,114 +615,19 @@ def main():
         axs[1].set_ylim((1e-3, 1e4))
         axs[1].set_xscale('log')
         axs[1].set_yscale('log')
-        plt.savefig(pjoin(plotdir, 'Section2p4p2_CPU.pdf'))
+        plt.savefig(pjoin(plotdir, 'Section2p4p2_CPU.eps'), format = 'eps', dpi = 1200)
         plt.close()
 
         dump_data_to_pickle(data, datapath)
 
-    def Section2p4p5_Response():
-
-        # Set the seed
-        np.random.seed(49)
-
-        def smooth_interpolate(th, func1, func2, weight):
-            return weight(th) * func1(th) + (1. - weight(th)) * func2(th)
-
-        def heaviside(th, sigma_lo, sigma_hi):
-            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: 1. - np.heaviside(th, 1.))
-
-        def arctan(th, sigma_lo, sigma_hi, k = 10.):
-            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: (1. - 2. / np.pi * np.arctan(np.pi / 2. * k * th)) / 2.)
-
-        def tanh(th, sigma_lo, sigma_hi, k = 10.):
-            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: (1. - np.tanh(k * th)) / 2.)
-
-        def erf(th, sigma_lo, sigma_hi, k = 10.):
-            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: (1. - scipy.special.erf(k * th)) / 2.)
-
-        def sigmoid(th, sigma_lo, sigma_hi, k = 10.):
-            return smooth_interpolate(th, lambda th: 1. + sigma_lo * th, lambda th: 1. + sigma_hi * th, lambda th: 1. - 1. / (1. + np.exp(-k * th)))
-
-        response_functions = {'Heaviside': (heaviside, 'k', '-'), 'arctan': (arctan, 'g', '--'), 'tanh': (tanh, 'b', ':'), 'erf': (erf, 'r', '-.'), 'sigmoid': (sigmoid, 'gold', '-')}
-
-        sigma_lo = 0.20
-        sigma_hi = 0.35
-        th = np.linspace(-1., +1., 1000)
-        for l, (f, c, ls) in response_functions.items():
-            plt.plot(th, f(th, sigma_lo, sigma_hi), color = c, label = l, linestyle = ls)
-        plt.xlim((th[0], th[-1]))
-        plt.ylim((1. - sigma_lo, 1. + sigma_hi))
-        plt.xlabel('Nuisance parameter $\\theta$ [a.u.]')
-        plt.ylabel('Response function $R(\\theta)$ [a.u.]')
-        plt.title('Different Response Functions')
-        plt.legend(loc = 'upper left')
-        plt.savefig(pjoin(plotdir, 'response_functions.pdf'))
-        plt.xlim((-0.2, +0.2))
-        plt.ylim((0.95, 1.075))
-        plt.savefig(pjoin(plotdir, 'response_functions_zoomed.pdf'))
-        plt.close()
-
-        # 1st derivatives:
-        th = np.linspace(-1., +1., 1000)
-        for l, (f, c, ls) in response_functions.items():
-            plt.plot(th, scipy.misc.derivative(lambda th: f(th, sigma_lo, sigma_hi), th, dx = 1e-6), color = c, label = l, linestyle = ls)
-        plt.xlim((th[0], th[-1]))
-        plt.ylim((0.15, 0.40))
-        plt.xlabel('Nuisance parameter $\\theta$ [a.u.]')
-        plt.ylabel('Derivative of response function $dR(\\theta)/d\\theta$ [a.u.]')
-        plt.title('Dervatives of Different Response Functions')
-        plt.legend(loc = 'upper left')
-        plt.savefig(pjoin(plotdir, 'response_functions_derivatives.pdf'))
-        plt.close()
-
-        s         = 10.
-        b1        = logVector(1., 10000., 100)
-        b2        = 5.
-        sigma1_lo = 20. / 100.
-        sigma1_hi = 35. / 100.
-        sigma2_lo = 70. / 100.
-        sigma2_hi = 90. / 100.
-        R         = lambda sigma1_lo, sigma1_hi, sigma2_lo, sigma2_hi: [[lambda th: f(th, sigma1_lo, sigma1_hi), lambda th: 1.], [lambda th: 1., lambda th: f(th, sigma2_lo, sigma2_hi)]]
-        S         = [[1., 0.75], [0.75, 1.]]
-
-        for l, (f, c, ls) in response_functions.items():
-            plt.plot(b1, [GaussZ0(s = s, b = [_b1, b2], R = R(sigma1_lo, sigma1_hi, sigma2_lo, sigma2_hi), S = S) for _b1 in b1], linestyle = ls, markersize = 0, color = c, label = l)
-
-        plt.xlim((b1[0], b1[-1]))
-        plt.ylim((0.001, 10.))
-        plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
-        plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.title('Sensitivities for Different Response Functions:\n$s = {}$, $b_2 = {}$'.format(int(s), int(b2)))
-        plt.legend(loc = 'upper right')
-        plt.savefig(pjoin(plotdir, 'response_functions_z0_b2eq%s.pdf' % int(b2)), bbox_inches = 'tight')
-        plt.close()
-
-        s  = 100.
-        b2 = 10000.
-
-        for l, (f, c, ls) in response_functions.items():
-            plt.plot(b1, [GaussZ0(s = s, b = [_b1, b2], R = R(sigma1_lo, sigma1_hi, sigma2_lo, sigma2_hi), S = S) for _b1 in b1], linestyle = ls, markersize = 0, color = c, label = l)
-
-        plt.xlim((b1[0], b1[-1]))
-        plt.ylim((0.008, 0.02))
-        plt.xlabel('Background 1 yield in SR $b_1$ [a.u.]')
-        plt.ylabel('Significance of discovery $\\textrm{med}[Z_0|\\mu^\\prime=1]$ [a.u.]')
-        plt.xscale('log')
-        plt.yscale('log')
-        plt.title('Sensitivities for Different Response Functions:\n$s = {}$, $b_2 = {}$'.format(int(s), int(b2)))
-        plt.legend(loc = 'upper right')
-        plt.savefig(pjoin(plotdir, 'response_functions_z0_b2eq%s.pdf' % int(b2)), bbox_inches = 'tight')
-        plt.close()
-
-    Section2p1p4()
-    Section2p2()
+    Section2p1p1()
+    Section2p1p2()
+    Section2p2p1()
     Section2p4p2_vsB1()
     Section2p4p2_vsSigma()
     Section2p4p4_Corr()
-    Section2p4p6_CPU()
     Section2p4p5_Response()
+    Section2p4p6_CPU()
 
 if __name__ == '__main__':
     main()
