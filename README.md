@@ -1,7 +1,7 @@
 Asymptotic Formulae Examples
 ============================
 
-Python 3 code for generating the data and producing the plots included in "Generalized asymptotic formulae for estimating statistical significance in high energy physics analyses" ([arXiv:2102.04275](https://arxiv.org/abs/2102.04275)).
+Python 3 code for generating the data and producing the plots included in "Asymptotic formulae for estimating statistical significance in particle physics analyses" ([DOI:10.1088/1361-6471/ac3dcd](https://doi.org/10.1088/1361-6471/ac3dcd), [arXiv:2102.04275](https://arxiv.org/abs/2102.04275)).
 
 Installing
 ----------
